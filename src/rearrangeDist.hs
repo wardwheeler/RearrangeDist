@@ -43,7 +43,7 @@ import Data.List
 import Control.Parallel.Strategies
 import Control.Concurrent
 import System.IO.Unsafe
-
+import Data.Maybe
 import Debug.Trace
 import qualified SymMatrix as SM
 
@@ -51,6 +51,10 @@ import qualified SymMatrix as SM
 {-# NOINLINE getNumThreads #-}
 getNumThreads :: Int
 getNumThreads = unsafePerformIO getNumCapabilities
+
+-- | thd3 returns third element of triple
+thd3 :: (a,b,c) -> c
+thd3 (_,_,f) = f
 
 
 -- | parseFastc take raw genome data and recodes in list of pairs of (name, [loci])
@@ -132,31 +136,32 @@ pair2String (x,y) = (x ++ " " ++ show y)
 -- returns teh match indix (in Maybe) else nothing.
 checkForZero :: Int -> [[Int]] -> Maybe Int
 checkForZero seqIndex distMatrix =
-	let firstZero = elemIndex 0 $ take (seqIndex - 1) (distMatrix !! seqIndex)
-	in 
-	if firstZero == Nothing then Nothing
-	else if (FromJust firstZero) >= seqIndex then Nothing 
-	else firstZero
+    let firstZero = elemIndex 0 $ take (seqIndex - 1) (distMatrix !! seqIndex)
+    in 
+    if firstZero == Nothing then Nothing
+    else firstZero
 
 -- | getMinimalStatesAndMatrix takes a matrix and "compresses" removing 0 costs 
 -- and collatring states with 0 distance, assigning them to taxa 
 getMinimalStatesAndMatrix :: [String] -> [[Int]] -> Int -> Int -> [Int] -> [(String, Int, Int)] -> ([(String, Int)],[[Int]])
 getMinimalStatesAndMatrix inSeqs distMatrix seqCounter stateCounter deleteList newStateList =
-	if null inSeqs then 
-		let tempLowerDiag = SM.fromLists distMatrix
-			newLowerDiag = SM.deleteRowsAndColumns tempLowerDiag deleteList
-			newMatrix = SM.toFullLists newLowerDiag
-		in ((reverse newStateList), newMatrix) --reverse since prepending pairs
-	else 
-		let firstSeq = head inSeqs 
-			hasNoZeroDist = checkForZero seqCounter 0 newStateList distMatrix
-		in
-		if zeroDist == Nothing then -- is a new states to keep 
-			getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) (stateCounter + 1) deleteList ((firstSeq, rowCounter, stateCounter) : newStateList)
-		else 
-			let matchState = fromJust zeroDist
-			in
-			getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) stateCounter (rowCounter : deleteList) ((firstSeq, rowCounter, matchState) : newStateList)
+    if null inSeqs then 
+        let tempLowerDiag = SM.fromLists distMatrix
+            newLowerDiag = SM.deleteRowsAndColumns tempLowerDiag deleteList
+            newMatrix = SM.toFullLists newLowerDiag
+            stateList = fmap thd3 (reverse newStateList)
+            reducedStateList = zip inSeqs stateList
+        in (reducedStateList, newMatrix) --reverse since prepending pairs
+    else 
+        let firstSeq = head inSeqs 
+            zeroDist = checkForZero seqCounter distMatrix
+        in
+        if zeroDist == Nothing then -- is a new states to keep 
+            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) (stateCounter + 1) deleteList ((firstSeq, seqCounter, stateCounter) : newStateList)
+        else 
+            let matchState = fromJust zeroDist
+            in
+            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) stateCounter (seqCounter : deleteList) ((firstSeq, seqCounter, matchState) : newStateList)
 
 -- | main driver
 main :: IO ()
@@ -165,14 +170,17 @@ main =
     -- Process arguments
     --  csv file first line taxon/leaf names, subsequent lines are distances--must be symmetrical
     args <- getArgs
-    if length args < 5 then error "Need at least 4 arguments: input fastc file, method ('breakpoint' or 'inversion'), 'linear' or 'circular' chomosome, cost (integer) of rearrangement, cost of insertion/delettion, and output file stub name "
+    if length args < 6 then error "Need at least 4 arguments: input fastc file, method ('breakpoint' or 'inversion'), 'linear' or 'circular' chomosome, cost (integer) of rearrangement, cost of insertion/delettion, whether all taxa have unique states (full/reduced), and output file stub name "
     else hPutStrLn stderr ("\nReading " ++ show (head args) ++ " input file Output to stub.fastc and stub.tcm ")
 
     let method = head (args !! 1)
     let topology = head (args !! 2)
     let rearrangeCost = read (args !! 3) :: Int
     let inDelCost = read (args !! 4) :: Int
-    let fileStub = args !! 5
+    let stateForm = args !! 5
+    let fileStub = args !! 6
+
+    mapM_ (hPutStrLn stderr) (tail args)
 
     rawData <- readFile $ head args
     let (inSeqs, locusNames) = parseFastc rawData
@@ -182,19 +190,38 @@ main =
 
     let distMatrix = getPairs inSeqs inSeqs method topology rearrangeCost inDelCost 
 
-    let (newStates, newMatrix) getMinimalStatesAndMatrix (fmap fst inSeqs) distMatrix 0 0 [] []
+    let (newStates, newMatrix) = getMinimalStatesAndMatrix (fmap fst inSeqs) distMatrix 0 0 [] []
+    -- make prefix-free states for sequences
 
-    let distString = makeString newMatrix
+    let distString = makeString distMatrix
+    let newDistString = makeString newMatrix
 
-    -- let charState = [0..((length inSeqs) -1)]
-    -- let charDef = zip (fmap fst inSeqs) charState
+    let charState = [0..((length inSeqs) -1)]
+    let charDef = zip (fmap fst inSeqs) charState
 
-    hPutStrLn stdout "xread\'Rearragement Character"
-    hPutStrLn stdout ((show $ length inSeqs) ++ " " ++ ("1"))
-    mapM_  (hPutStrLn stdout) $ fmap pair2String newStates --charDef
-    hPutStrLn stdout ";\nproc /;"
-    hPutStrLn stdout "\n\n"
-    mapM_ (hPutStrLn stdout) distString
+    -- add large number row and large number column for indels
+    -- create file handles for .fastc .tcm and .csv (for distance matrix)
 
+    let fastcFile = fileStub ++ ".fastc"
+    let tcmFile = fileStub ++ ".tcm"
+    let csvFile = fileStub ++ ".csv"
 
+    fout <- openFile fastcFile WriteMode
+    tout <- openFile tcmFile WriteMode
+    cout <- openFile csvFile WriteMode
+
+    if (head stateForm == 'f') then do 
+        {mapM_  (hPutStrLn stdout) $ fmap pair2String charDef; --newStates --charDef
+        hPutStrLn stdout ";\nproc /;";
+        hPutStrLn stdout "\n\n";
+        -- Add line for alphabet
+        mapM_ (hPutStrLn tout) distString;}
+    else do 
+        {mapM_  (hPutStrLn stdout) $ fmap pair2String newStates; --charDef
+        hPutStrLn stdout ";\nproc /;";
+        hPutStrLn stdout "\n\n";
+        -- Add line for alphabet
+        mapM_ (hPutStrLn tout) newDistString;}
+
+    hPutStrLn stderr "Done"
     
