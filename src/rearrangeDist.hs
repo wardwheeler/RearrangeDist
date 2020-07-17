@@ -1,0 +1,200 @@
+{- |
+Module      :  rearrangeDist.hs 
+Description :  Progam to calculate chromosomal rearangement distances
+               input fastc file
+Copyright   :  (c) 2020 Ward C. Wheeler, Division of Invertebrate Zoology, AMNH. All rights reserved.
+License     :  
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met: 
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer. 
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution. 
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies, 
+either expressed or implied, of the FreeBSD Project.
+
+Maintainer  :  Ward Wheeler <wheeler@amnh.org>
+Stability   :  unstable
+Portability :  portable (I hope)
+
+-}
+
+module Main where
+
+import System.IO
+import System.Environment
+import Data.List
+import Control.Parallel.Strategies
+import Control.Concurrent
+import System.IO.Unsafe
+
+import Debug.Trace
+import qualified SymMatrix as SM
+
+-- | getNumThreads gets number of COncurrent  threads
+{-# NOINLINE getNumThreads #-}
+getNumThreads :: Int
+getNumThreads = unsafePerformIO getNumCapabilities
+
+
+-- | parseFastc take raw genome data and recodes in list of pairs of (name, [loci])
+parseFastc :: String -> ([(String, [String])], [String])
+parseFastc inData =
+    let inLines' = lines inData
+        inLines = filter (/= []) inLines'
+        taxonNames = fmap tail $ filter  ((== '>').head) (words inData)
+        taxonDataLines = filter  ((/= '>').head) inLines
+        taxonData = fmap words taxonDataLines
+        locusNames = nub $ fmap (filter (/= '~')) $ concat taxonData --sort $ fmap (filter (/= '~')) $ 
+    in
+    -- trace ("There are " ++ (show $ length inLines) ++ " input lines in data file")
+    (zip taxonNames taxonData, locusNames)
+
+-- | makePairs takes a list of loci and topology and returns adjacent pairs (orderad)
+-- if circular adds a front to back pair
+makePairs ::  [String] -> Char -> (String, String) -> [(String, String)]
+makePairs inLocusList topology headTail =
+    if length inLocusList == 1 then
+        if topology == 'c' then [headTail]
+        else []
+    else
+        if (head inLocusList) < (head $ tail inLocusList) then 
+            (head inLocusList, head $ tail inLocusList) : makePairs (tail inLocusList) topology headTail
+        else (head $ tail inLocusList, head inLocusList) : makePairs (tail inLocusList) topology headTail
+
+-- | getBreakPoint takes optology and rearrange cost and indel cost and returns distance 
+getBreakPoint :: (String, [String]) -> (String, [String]) -> Char -> Int -> Int -> Int
+getBreakPoint (_, seq1Loci) (_, seq2Loci) topology rearrangeCost inDelCost =
+    if null seq1Loci || null seq2Loci then error "Null input chromosome"
+    else 
+        let in1not2 = seq1Loci \\ seq2Loci
+            in2not1 = seq2Loci \\ seq1Loci
+            toRemove = concat [in1not2, in2not1]
+            indelAdjustment = inDelCost * ((length in1not2) + (length in2not1)) 
+            seq1' = seq1Loci \\ toRemove
+            seq2' = seq2Loci \\ toRemove
+            pairs1 = makePairs seq1' topology (head seq1', last seq1')
+            pairs2 = makePairs seq2' topology (head seq2', last seq2')
+            distPairs = (pairs1 \\ pairs2) ++ (pairs2 \\ pairs1)
+            pairCost = (length distPairs) * rearrangeCost
+        in
+        pairCost + indelAdjustment
+
+-- | getPairDist takes arguments and calls appropriate distance calculator
+getPairDist :: Char -> Char -> Int -> Int -> (String, [String]) -> (String, [String])-> Int
+getPairDist method topology rearrangeCost inDelCost seq1 seq2  =
+    if method == 'b' then
+        getBreakPoint seq1 seq2 topology rearrangeCost inDelCost
+    else error ("Method (first letter) " ++ (show method) ++ " not implemented")
+
+-- | getPairs creates a matrix of parwise distances
+getPairs :: [(String, [String])] -> [(String, [String])] -> Char -> Char -> Int -> Int -> [[Int]]
+getPairs rowSeqs columnSeqs method topology rearrangeCost inDelCost =
+    if null rowSeqs then []
+    else
+        let (chunkSize, _) = quotRem (length columnSeqs) getNumThreads
+            firstRowSeq = head rowSeqs
+            rowDistList = fmap (getPairDist method topology rearrangeCost inDelCost firstRowSeq) columnSeqs `using` parListChunk chunkSize rdeepseq
+        in
+        rowDistList : getPairs (tail rowSeqs) columnSeqs method topology rearrangeCost inDelCost 
+
+-- | makeString take list of list is retuns nice matrix form 
+makeString :: (Show a) => [[a]] -> [String]
+makeString inListList =
+    if null inListList then []
+    else 
+        let firstRow = head inListList
+            stringList = concat $ intersperse (" ") $ (fmap show firstRow)
+        in
+        stringList : makeString (tail inListList)
+
+-- | pair2String takes pairs and converts to string
+pair2String :: (Show b) => (String, b) -> String
+pair2String (x,y) = (x ++ " " ++ show y)
+
+-- | checkForZero take a seqeuence index and checks in matrix for a zero value, if so
+-- returns teh match indix (in Maybe) else nothing.
+checkForZero :: Int -> [[Int]] -> Maybe Int
+checkForZero seqIndex distMatrix =
+	let firstZero = elemIndex 0 $ take (seqIndex - 1) (distMatrix !! seqIndex)
+	in 
+	if firstZero == Nothing then Nothing
+	else if (FromJust firstZero) >= seqIndex then Nothing 
+	else firstZero
+
+-- | getMinimalStatesAndMatrix takes a matrix and "compresses" removing 0 costs 
+-- and collatring states with 0 distance, assigning them to taxa 
+getMinimalStatesAndMatrix :: [String] -> [[Int]] -> Int -> Int -> [Int] -> [(String, Int, Int)] -> ([(String, Int)],[[Int]])
+getMinimalStatesAndMatrix inSeqs distMatrix seqCounter stateCounter deleteList newStateList =
+	if null inSeqs then 
+		let tempLowerDiag = SM.fromLists distMatrix
+			newLowerDiag = SM.deleteRowsAndColumns tempLowerDiag deleteList
+			newMatrix = SM.toFullLists newLowerDiag
+		in ((reverse newStateList), newMatrix) --reverse since prepending pairs
+	else 
+		let firstSeq = head inSeqs 
+			hasNoZeroDist = checkForZero seqCounter 0 newStateList distMatrix
+		in
+		if zeroDist == Nothing then -- is a new states to keep 
+			getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) (stateCounter + 1) deleteList ((firstSeq, rowCounter, stateCounter) : newStateList)
+		else 
+			let matchState = fromJust zeroDist
+			in
+			getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) stateCounter (rowCounter : deleteList) ((firstSeq, rowCounter, matchState) : newStateList)
+
+-- | main driver
+main :: IO ()
+main =
+  do
+    -- Process arguments
+    --  csv file first line taxon/leaf names, subsequent lines are distances--must be symmetrical
+    args <- getArgs
+    if length args < 5 then error "Need at least 4 arguments: input fastc file, method ('breakpoint' or 'inversion'), 'linear' or 'circular' chomosome, cost (integer) of rearrangement, cost of insertion/delettion, and output file stub name "
+    else hPutStrLn stderr ("\nReading " ++ show (head args) ++ " input file Output to stub.fastc and stub.tcm ")
+
+    let method = head (args !! 1)
+    let topology = head (args !! 2)
+    let rearrangeCost = read (args !! 3) :: Int
+    let inDelCost = read (args !! 4) :: Int
+    let fileStub = args !! 5
+
+    rawData <- readFile $ head args
+    let (inSeqs, locusNames) = parseFastc rawData
+
+    hPutStrLn stderr ("There are " ++ (show $ length inSeqs) ++ " taxa")
+    hPutStrLn stderr ("There are " ++ (show $ length locusNames) ++ " loci")
+
+    let distMatrix = getPairs inSeqs inSeqs method topology rearrangeCost inDelCost 
+
+    let (newStates, newMatrix) getMinimalStatesAndMatrix (fmap fst inSeqs) distMatrix 0 0 [] []
+
+    let distString = makeString newMatrix
+
+    -- let charState = [0..((length inSeqs) -1)]
+    -- let charDef = zip (fmap fst inSeqs) charState
+
+    hPutStrLn stdout "xread\'Rearragement Character"
+    hPutStrLn stdout ((show $ length inSeqs) ++ " " ++ ("1"))
+    mapM_  (hPutStrLn stdout) $ fmap pair2String newStates --charDef
+    hPutStrLn stdout ";\nproc /;"
+    hPutStrLn stdout "\n\n"
+    mapM_ (hPutStrLn stdout) distString
+
+
+    

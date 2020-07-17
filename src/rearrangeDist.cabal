@@ -1,0 +1,41 @@
+cabal-version:  2.2
+build-type:     Simple
+
+name:           rearrangeDist
+version:        0.1.0.0
+--description:    Please see the README on GitHub at <https://github.com/githubuser/rearrangeDist#readme>
+--homepage:       https://github.com/githubuser/rearrangeDist#readme
+--bug-reports:    https://github.com/githubuser/rearrangeDist/issues
+--author:         Ward Wheeler
+--maintainer:     wheeler@amnh.org
+--copyright:      2020 Ward Wheeler
+--license:        BSD3
+--license-file:   LICENSE
+
+-- Need to add vector == 0.12.0.1 for ghc 8.4.4
+-- -optl-static -optl-pthread for static
+
+
+executable rearrangeDist
+
+  main-is: rearrangeDist.hs
+
+  ghc-options:  -Wall
+                -Wincomplete-patterns
+                -threaded 
+                -O2
+                -static
+
+  build-depends:  base >=4.10
+                , containers >=0.5
+                , parallel
+                , MissingH
+                , deepseq
+                , vector
+                , sort
+                , process
+                
+
+  default-language: Haskell2010
+
+  other-modules: SymMatrix
