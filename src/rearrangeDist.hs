@@ -141,8 +141,8 @@ makeStringList inListList maxDist numStates =
         stringList : makeStringList (tail inListList) maxDist numStates
 
 -- | pair2String takes pairs and converts to string
-pair2String :: (String, String) -> String
-pair2String (x,y) = (x ++ " " ++ y)
+pair2FastcString :: (String, String) -> String
+pair2FastcString (x,y) = (">" ++ x ++ "\n" ++ y ++ "\n")
 
 -- | checkForZero take a seqeuence index and checks in matrix for a zero value, if so
 -- returns teh match indix (in Maybe) else nothing.
@@ -305,11 +305,11 @@ main =
     
 
     if (head stateForm == 'f') then do 
-        {mapM_  (hPutStrLn fout) $ fmap pair2String charDefFull; --need prefix free
+        {mapM_  (hPutStr fout) $ fmap pair2FastcString charDefFull; --need prefix free
         -- Add indel values
         mapM_ (hPutStrLn tout) distString;}
     else do 
-        {mapM_  (hPutStrLn fout) $ fmap pair2String charDefReduced; --need prefix free
+        {mapM_  (hPutStr fout) $ fmap pair2FastcString charDefReduced; --need prefix free
         -- add indel values
         mapM_ (hPutStrLn tout) newDistString;}
 
