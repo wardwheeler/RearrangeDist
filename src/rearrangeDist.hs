@@ -46,12 +46,18 @@ import System.IO.Unsafe
 import Data.Maybe
 import Debug.Trace
 import qualified SymMatrix as SM
+import Data.CSV
+import qualified Data.Map.Strict as Map
+
 
 -- | getNumThreads gets number of COncurrent  threads
 {-# NOINLINE getNumThreads #-}
 getNumThreads :: Int
 getNumThreads = unsafePerformIO getNumCapabilities
 
+-- | fst3 returns first element of triple
+fst3 :: (a,b,c) -> a
+fst3 (d,_,_) = d
 -- | thd3 returns third element of triple
 thd3 :: (a,b,c) -> c
 thd3 (_,_,f) = f
@@ -118,50 +124,117 @@ getPairs rowSeqs columnSeqs method topology rearrangeCost inDelCost =
         in
         rowDistList : getPairs (tail rowSeqs) columnSeqs method topology rearrangeCost inDelCost 
 
--- | makeString take list of list is retuns nice matrix form 
-makeString :: (Show a) => [[a]] -> [String]
-makeString inListList =
-    if null inListList then []
+-- | makeStringList take list of list is retuns nice matrix form 
+-- add indel (10 x max value) column and row
+makeStringList :: [[Int]]-> Int -> Int -> [String]
+makeStringList inListList maxDist numStates =
+    if null inListList then
+        -- add last row
+        let lastRow = (replicate numStates (10 * maxDist)) ++ [0]
+            rowString = concat $ intersperse (" ") $ (fmap show lastRow)
+        in 
+        [rowString]
     else 
-        let firstRow = head inListList
+        let firstRow = (head inListList) ++ [10 * maxDist] 
             stringList = concat $ intersperse (" ") $ (fmap show firstRow)
         in
-        stringList : makeString (tail inListList)
+        stringList : makeStringList (tail inListList) maxDist numStates
 
 -- | pair2String takes pairs and converts to string
-pair2String :: (Show b) => (String, b) -> String
-pair2String (x,y) = (x ++ " " ++ show y)
+pair2String :: (String, String) -> String
+pair2String (x,y) = (x ++ " " ++ y)
 
 -- | checkForZero take a seqeuence index and checks in matrix for a zero value, if so
 -- returns teh match indix (in Maybe) else nothing.
 checkForZero :: Int -> [[Int]] -> Maybe Int
 checkForZero seqIndex distMatrix =
-    let firstZero = elemIndex 0 $ take (seqIndex - 1) (distMatrix !! seqIndex)
+    let firstZero = elemIndex 0 $ take seqIndex (distMatrix !! seqIndex)
     in 
     if firstZero == Nothing then Nothing
     else firstZero
 
 -- | getMinimalStatesAndMatrix takes a matrix and "compresses" removing 0 costs 
--- and collatring states with 0 distance, assigning them to taxa 
+-- and collapsing states with 0 distance, assigning them to first taxon with 0 distance 
+-- newStateList contains teh updated states and original states for each taxon as states are examined for 
+-- uniquness (no zero distances)
 getMinimalStatesAndMatrix :: [String] -> [[Int]] -> Int -> Int -> [Int] -> [(String, Int, Int)] -> ([(String, Int)],[[Int]])
 getMinimalStatesAndMatrix inSeqs distMatrix seqCounter stateCounter deleteList newStateList =
     if null inSeqs then 
         let tempLowerDiag = SM.fromLists distMatrix
             newLowerDiag = SM.deleteRowsAndColumns tempLowerDiag deleteList
             newMatrix = SM.toFullLists newLowerDiag
-            stateList = fmap thd3 (reverse newStateList)
-            reducedStateList = zip inSeqs stateList
+            stateList = fmap thd3 newStateList
+            taxList = fmap fst3 newStateList
+            reducedStateList = zip taxList stateList
         in (reducedStateList, newMatrix) --reverse since prepending pairs
     else 
         let firstSeq = head inSeqs 
             zeroDist = checkForZero seqCounter distMatrix
         in
         if zeroDist == Nothing then -- is a new states to keep 
-            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) (stateCounter + 1) deleteList ((firstSeq, seqCounter, stateCounter) : newStateList)
+            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) (stateCounter + 1) deleteList (newStateList ++ [(firstSeq, seqCounter, stateCounter)])
         else 
-            let matchState = fromJust zeroDist
+            let zeroState = fromJust zeroDist -- original number of matched taxon
+                matchState = thd3 $ newStateList !! zeroState -- updated state number of taxon with zero distance (could be after other matches)
             in
-            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) stateCounter (seqCounter : deleteList) ((firstSeq, seqCounter, matchState) : newStateList)
+            --trace (show ) 
+            getMinimalStatesAndMatrix (tail inSeqs) distMatrix (seqCounter + 1) stateCounter (seqCounter : deleteList) (newStateList ++ [(firstSeq, seqCounter, matchState)])
+
+
+-- | makePreefixFreeList takes list of number strings and letter string and makes list of prefix free Strings
+makePrefixFreeList :: [Char] -> [Char] -> [String]
+makePrefixFreeList numberList letterList =
+    if null numberList then []
+    else 
+        let firstNum = [head numberList]
+            letterStringList = fmap (:[]) letterList -- charToString letterList
+            newRow = fmap (firstNum ++ ) letterStringList
+        in
+        newRow ++ (makePrefixFreeList (tail numberList) letterList)
+
+
+
+-- |  makeMap creates prefix free symbol list for symbol list
+-- limited to 520 (10 * 52) -- needs to be a bit more sophisticated so 
+-- no limited to 520
+makeMap :: [String] -> Map.Map String String
+makeMap symbolList =
+    if null symbolList then error "Empty symbol List"
+    else if length symbolList > 520 then error "Only making codes for up to 520 states"
+    else
+        let numSymbols = length symbolList
+            letterList = ['a'..'z'] ++ ['A'..'Z'] 
+            numberList = ['0'..'9']
+            prefixFreeList = makePrefixFreeList numberList letterList
+            keyPairList = zip symbolList (take numSymbols prefixFreeList)
+        in
+        trace ("keys : " ++ (show $ length numberList) ++ " numbers " ++ (show $ length letterList)  
+            ++ " lettters " ++ (show $ length prefixFreeList) ++ " " ++ (show $ length keyPairList))
+        Map.fromList keyPairList
+
+
+-- | getNewSymbols takes symbol list and map and returns new symbol as String
+getNewSymbols :: Map.Map String String -> [String] -> String
+getNewSymbols symbolMap symbols =
+    if null symbols then []
+    else 
+        let firstSymbol = Map.lookup (head symbols) symbolMap
+        in
+        if firstSymbol == Nothing then error ("Can't find symbol " ++ (head symbols) ++ " in map")  
+        else 
+            (fromJust firstSymbol) ++ " "  ++  (getNewSymbols symbolMap (tail symbols))
+
+-- | getNewSymbols takes a symbol String returns new symbol as String
+getNewSymbol :: Map.Map String String -> String -> String
+getNewSymbol symbolMap symbol  =
+    if null symbol then []
+    else 
+        let firstSymbol = Map.lookup symbol symbolMap
+        in
+        if firstSymbol == Nothing then error ("Can't find symbol " ++ symbol ++ " in map")  
+        else 
+            (fromJust firstSymbol)
+
 
 -- | main driver
 main :: IO ()
@@ -189,39 +262,60 @@ main =
     hPutStrLn stderr ("There are " ++ (show $ length locusNames) ++ " loci")
 
     let distMatrix = getPairs inSeqs inSeqs method topology rearrangeCost inDelCost 
+    let maxDist = maximum $ fmap maximum distMatrix
+    hPutStrLn stderr ("The maximum distance is " ++ (show maxDist))
 
     let (newStates, newMatrix) = getMinimalStatesAndMatrix (fmap fst inSeqs) distMatrix 0 0 [] []
-    -- make prefix-free states for sequences
+    hPutStrLn stderr ("There are " ++ (show $ length newMatrix) ++ " unique states")
 
-    let distString = makeString distMatrix
-    let newDistString = makeString newMatrix
+    let stateListFull = fmap show [0..((length distMatrix) - 1)]
+    let stateListReduced = fmap show [0..((length newMatrix) - 1)]
 
-    let charState = [0..((length inSeqs) -1)]
-    let charDef = zip (fmap fst inSeqs) charState
+    let symbolMapFull = makeMap stateListFull
+    let symbolMapReduced = makeMap stateListReduced
+
+    let symbolStringFull = getNewSymbols symbolMapFull stateListFull 
+    let symbolStringReduced = getNewSymbols symbolMapReduced stateListReduced 
+
+    let symbolListFull = fmap (getNewSymbol symbolMapFull) stateListFull 
+    -- let symbolListReduced = fmap (getNewSymbol symbolMapFull) stateListReduced 
 
     -- add large number row and large number column for indels
-    -- create file handles for .fastc .tcm and .csv (for distance matrix)
+    let distString = symbolStringFull : makeStringList distMatrix maxDist (length distMatrix)
+    let newDistString = symbolStringReduced : makeStringList newMatrix maxDist (length newMatrix)
+
+    let charDefFull = zip (fmap fst inSeqs) symbolListFull
+    let newMappedStates = fmap (getNewSymbol symbolMapReduced) $ fmap show $ fmap snd newStates
+    let charDefReduced = zip (fmap fst inSeqs) newMappedStates
 
     let fastcFile = fileStub ++ ".fastc"
     let tcmFile = fileStub ++ ".tcm"
-    let csvFile = fileStub ++ ".csv"
+    let csvOutFile = fileStub ++ ".csv"
 
     fout <- openFile fastcFile WriteMode
     tout <- openFile tcmFile WriteMode
-    cout <- openFile csvFile WriteMode
+    cout <- openFile csvOutFile WriteMode
+
+    
+    -- CSV output of full matrix
+    let nameList = fmap fst inSeqs
+    let distMatrixStrings = fmap (fmap show) distMatrix
+    let csvString = genCsvFile (nameList : distMatrixStrings)
+    hPutStrLn cout csvString
+    
 
     if (head stateForm == 'f') then do 
-        {mapM_  (hPutStrLn stdout) $ fmap pair2String charDef; --newStates --charDef
-        hPutStrLn stdout ";\nproc /;";
-        hPutStrLn stdout "\n\n";
-        -- Add line for alphabet
+        {mapM_  (hPutStrLn fout) $ fmap pair2String charDefFull; --need prefix free
+        -- Add indel values
         mapM_ (hPutStrLn tout) distString;}
     else do 
-        {mapM_  (hPutStrLn stdout) $ fmap pair2String newStates; --charDef
-        hPutStrLn stdout ";\nproc /;";
-        hPutStrLn stdout "\n\n";
-        -- Add line for alphabet
+        {mapM_  (hPutStrLn fout) $ fmap pair2String charDefReduced; --need prefix free
+        -- add indel values
         mapM_ (hPutStrLn tout) newDistString;}
+
+    hClose fout
+    hClose cout
+    hClose tout
 
     hPutStrLn stderr "Done"
     
