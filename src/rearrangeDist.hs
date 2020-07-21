@@ -93,17 +93,20 @@ getBreakPoint :: (String, [String]) -> (String, [String]) -> Char -> Int -> Int 
 getBreakPoint (_, seq1Loci) (_, seq2Loci) topology rearrangeCost inDelCost =
     if null seq1Loci || null seq2Loci then error "Null input chromosome"
     else 
-        let in1not2 = seq1Loci \\ seq2Loci
-            in2not1 = seq2Loci \\ seq1Loci
+        let seq1Loci' = fmap (filter (/= '~')) seq1Loci
+            seq2Loci' = fmap (filter (/= '~')) seq2Loci
+            in1not2 = seq1Loci' \\ seq2Loci'
+            in2not1 = seq2Loci' \\ seq1Loci'
             toRemove = concat [in1not2, in2not1]
             indelAdjustment = inDelCost * ((length in1not2) + (length in2not1)) 
-            seq1' = seq1Loci \\ toRemove
-            seq2' = seq2Loci \\ toRemove
+            seq1' = seq1Loci' \\ toRemove
+            seq2' = seq2Loci' \\ toRemove
             pairs1 = makePairs seq1' topology (head seq1', last seq1')
             pairs2 = makePairs seq2' topology (head seq2', last seq2')
             distPairs = (pairs1 \\ pairs2) ++ (pairs2 \\ pairs1)
             pairCost = (length distPairs) * rearrangeCost
         in
+        trace ("Inputs: " ++ (show seq1Loci') ++ " " ++ (show seq2Loci') ++ " => " ++ (show pairCost) ++ " + " ++ (show indelAdjustment)) 
         pairCost + indelAdjustment
 
 -- | getPairDist takes arguments and calls appropriate distance calculator
@@ -208,8 +211,8 @@ makeMap symbolList =
             prefixFreeList = makePrefixFreeList numberList letterList
             keyPairList = zip symbolList (take numSymbols prefixFreeList)
         in
-        trace ("keys : " ++ (show $ length numberList) ++ " numbers " ++ (show $ length letterList)  
-            ++ " lettters " ++ (show $ length prefixFreeList) ++ " " ++ (show $ length keyPairList))
+        -- trace ("keys : " ++ (show $ length numberList) ++ " numbers " ++ (show $ length letterList)  
+        --    ++ " lettters " ++ (show $ length prefixFreeList) ++ " " ++ (show $ length keyPairList))
         Map.fromList keyPairList
 
 
