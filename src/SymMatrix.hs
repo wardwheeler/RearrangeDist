@@ -135,7 +135,7 @@ getFullRow inM index =
     else
         let firstPart = V.toList $ inM V.! index -- initial [0..index] of elements
             restMatrix = V.drop (index + 1) inM
-            restByColumn = V.toList $ V.map (V.! (index + 1)) restMatrix
+            restByColumn = V.toList $ V.map (V.! index) restMatrix
         in
         firstPart ++ restByColumn
 
@@ -332,3 +332,4 @@ deleteColumn origRow deleteList rowLength colCounter =
         in
         if toKeep == True then firstValue `V.cons` (deleteColumn (V.tail origRow) deleteList rowLength (colCounter + 1))
         else deleteColumn (V.tail origRow) deleteList rowLength (colCounter + 1)
+        
