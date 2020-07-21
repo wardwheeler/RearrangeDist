@@ -103,10 +103,11 @@ getBreakPoint (_, seq1Loci) (_, seq2Loci) topology rearrangeCost inDelCost =
             seq2' = seq2Loci' \\ toRemove
             pairs1 = makePairs seq1' topology (head seq1', last seq1')
             pairs2 = makePairs seq2' topology (head seq2', last seq2')
-            distPairs = (pairs1 \\ pairs2) ++ (pairs2 \\ pairs1)
+            distPairs = (pairs1 \\ pairs2) -- really only X->Y ++ (pairs2 \\ pairs1)
             pairCost = (length distPairs) * rearrangeCost
         in
-        trace ("Inputs: " ++ (show seq1Loci') ++ " " ++ (show seq2Loci') ++ " => " ++ (show pairCost) ++ " + " ++ (show indelAdjustment)) 
+        --trace ("Inputs: " ++ (show seq1Loci') ++ " " ++ (show seq2Loci') ++ " => " ++ (show pairCost) ++ " + " ++ (show indelAdjustment) ++ "\n"
+        --    ++ (show pairs1) ++ "\n" ++ (show pairs2)) 
         pairCost + indelAdjustment
 
 -- | getPairDist takes arguments and calls appropriate distance calculator
