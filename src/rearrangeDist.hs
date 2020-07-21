@@ -108,7 +108,14 @@ getBreakPoint (_, seq1Loci) (_, seq2Loci) topology rearrangeCost inDelCost =
         in
         --trace ("Inputs: " ++ (show seq1Loci') ++ " " ++ (show seq2Loci') ++ " => " ++ (show pairCost) ++ " + " ++ (show indelAdjustment) ++ "\n"
         --    ++ (show pairs1) ++ "\n" ++ (show pairs2)) 
-        pairCost + indelAdjustment
+        if (pairCost > 0) then pairCost + indelAdjustment
+        else 
+            -- check for one sequence inverse of other will have zero distance
+            if seq1Loci' /= (reverse seq2Loci') then pairCost + indelAdjustment
+            else 
+                --maximum distance if inverse
+                trace ("Two sequences are inverses of each other, hence zero breakpoint distance but are not equal")
+                pairCost + indelAdjustment
 
 -- | getPairDist takes arguments and calls appropriate distance calculator
 getPairDist :: Char -> Char -> Int -> Int -> (String, [String]) -> (String, [String])-> Int
