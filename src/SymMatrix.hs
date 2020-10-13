@@ -1,18 +1,18 @@
 {- |
-Module      :  SymMatrix.hs 
+Module      :  SymMatrix.hs
 Description :  Progam to manipulate square symmetric lower diagonal matrices with diagnonal values
                 as if they were normal matrices
 Copyright   :  (c) 2020 Ward C. Wheeler, Division of Invertebrate Zoology, AMNH. All rights reserved.
-License     :  
+License     :
 
 Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met: 
+modification, are permitted provided that the following conditions are met:
 
 1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer. 
+   list of conditions and the following disclaimer.
 2. Redistributions in binary form must reproduce the above copyright notice,
    this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution. 
+   and/or other materials provided with the distribution.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -26,7 +26,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The views and conclusions contained in the software and documentation are those
-of the authors and should not be interpreted as representing official policies, 
+of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
 
 Maintainer  :  Ward Wheeler <wheeler@amnh.org>
@@ -35,20 +35,21 @@ Portability :  portable (I hope)
 
 -}
 
-module SymMatrix (empty, dim, fromLists, Matrix, 
+module SymMatrix (empty, dim, fromLists, Matrix,
                    SymMatrix.null, cols, rows,
                    (!), toLists, toRows, fromRows,
                    toFullLists, getFullRow,
-                   isSymmetric, updateMatrix, 
+                   isSymmetric, updateMatrix,
                    unsafeUpdateMatrix,
                    addMatrixRow, addMatrices,
-                   deleteRowsAndColumns, showMatrixNicely) where
+                   deleteRowsAndColumns, showMatrixNicely
+                   , SymMatrix.map, SymMatrix.flatten
+                   ,getFullRowVect) where
 
--- import Debug.Trace
-import qualified Data.List as L
-import qualified Data.Vector as V
+import qualified Data.List           as L
+import qualified Data.Sort           as S
+import qualified Data.Vector         as V
 import qualified Data.Vector.Generic as G
-import qualified Data.Sort as S
 
 -- | Matrix type as Vector of Vectors
 type Matrix a = V.Vector (V.Vector a)
@@ -63,8 +64,8 @@ empty = G.empty
 
 -- | dim returns dimmension (rows = cols)
 dim :: (Eq a) => Matrix a -> (Int, Int)
-dim inMatrix = 
-    if SymMatrix.null inMatrix then (0,0) 
+dim inMatrix =
+    if SymMatrix.null inMatrix then (0,0)
     else (V.length inMatrix, V.length inMatrix)
 
 -- | rows returns number rows in Matrix (rows = cols)
@@ -81,9 +82,8 @@ null inMatrix = inMatrix == empty
 
 -- | isSymmetric is true by defineition--when creted error if not
 isSymmetric :: (Eq a) => Matrix a -> Bool
-isSymmetric inM = 
-    if SymMatrix.null inM then error "Nulll martix in isSymmetric"
-    else True
+isSymmetric inM =
+    not (SymMatrix.null inM) || error "Null matrix in isSymmetric"
 
 -- | fromRows creates a lower diagonal matrix (with diagonal)
 fromRows :: (Eq a, Show a) => [V.Vector a] -> Matrix a
@@ -92,20 +92,20 @@ fromRows inVectList = fromLists $ fmap V.toList inVectList
 -- | toRows converts a Matrix to a list of Vectors
 -- unequal in length
 toRows :: (Eq a, Show a) => Matrix a -> [V.Vector a]
-toRows inM = V.toList inM 
+toRows = V.toList
 
 -- | fromLists takes list of list of a and returns lower diagnoal (with diagonal)
 -- matrix as Matrix (Vector of Vectors)
 fromLists :: (Eq a, Show a) => [[a]] -> Matrix a
 fromLists inListList =
     if L.null inListList then empty
-    else 
+    else
         let initialSquare = V.map V.fromList $ V.fromList inListList
             colsH = V.length $ V.head initialSquare
             rowsH = V.length initialSquare
         in
-        if (colsH /= rowsH) then error ("Input matrix is not square " ++ show inListList)
-        else 
+        if colsH /= rowsH then error ("Input matrix is not square " ++ show inListList)
+        else
             let indexPairs = cartProd [0..(rowsH - 1)] [0..(rowsH - 1)]
                 sym = checkSymmetry initialSquare indexPairs
             in
@@ -116,7 +116,7 @@ fromLists inListList =
 toLists :: (Eq a, Show a) => Matrix a -> [[a]]
 toLists inM =
     if SymMatrix.null inM then []
-    else 
+    else
         V.toList $ V.map V.toList inM
 
 -- | toFullLists takes a Matrix and returns a list of lists of full length
@@ -124,8 +124,8 @@ toLists inM =
 toFullLists :: (Eq a, Show a) => Matrix a -> [[a]]
 toFullLists inM =
     if SymMatrix.null inM then []
-    else 
-        fmap (getFullRow inM) [0..((rows inM) - 1)]
+    else
+        fmap (getFullRow inM) [0..(rows inM - 1)]
 
 -- | getFullRow returns a specific full row (is if matrix were square)
 -- as a list
@@ -139,11 +139,22 @@ getFullRow inM index =
         in
         firstPart ++ restByColumn
 
+-- | getFullRowVect reurns a specific full row (is if matrix were square)
+-- as a Vector
+getFullRowVect :: (Eq a, Show a) => Matrix a -> Int -> V.Vector a
+getFullRowVect inM index =
+    if SymMatrix.null inM then V.empty
+    else
+        let firstPart = inM V.! index -- initial [0..index] of elements
+            restMatrix = V.drop (index + 1) inM
+            restByColumn = V.map (V.! index) restMatrix
+        in
+        firstPart V.++ restByColumn
 
 -- | indexing lower diag matrix
-(!) :: Matrix a -> (Int, Int) -> a 
+(!) :: Matrix a -> (Int, Int) -> a
 (!) inM (iIndex,jIndex) =
-    if iIndex > jIndex then 
+    if iIndex > jIndex then
         (inM V.! iIndex) V.! jIndex
     else
         (inM V.! jIndex) V.! iIndex
@@ -151,38 +162,38 @@ getFullRow inM index =
 -- | makeLowerDiag take a Vector of Vetors (Matrix) and retusn a lower diagonal matrix
 -- including diagonal
 makeLowerDiag :: (Eq a) => Matrix a -> Int -> Int -> Matrix a
-makeLowerDiag inM row numRows=
-    if SymMatrix.null inM then error "Input matrix is empty in makeLowerDiag"
-    else if (row == numRows) then V.empty
-    else 
-        let origRow = inM V.! row
-            newRow = V.take (row + 1) origRow
-        in
-        V.cons newRow  (makeLowerDiag inM (row + 1) numRows)
+makeLowerDiag inM row numRows
+  | SymMatrix.null inM = error "Input matrix is empty in makeLowerDiag"
+  | row == numRows = V.empty
+  | otherwise =
+    let origRow = inM V.! row
+        newRow = V.take (row + 1) origRow
+    in
+    V.cons newRow  (makeLowerDiag inM (row + 1) numRows)
 
--- | cartesian product of two lists 
+-- | cartesian product of two lists
 cartProd :: [a] -> [a] -> [(a,a)]
 cartProd xs ys = [(x,y) | x <- xs, y <- ys]
 
--- | checkSymmetry takes a Vector of VEctors of a 
+-- | checkSymmetry takes a Vector of VEctors of a
 -- and checks for symmetry
 checkSymmetry :: (Eq a, Show a) => Matrix a -> [(Int, Int)] -> Bool
-checkSymmetry inVV pairList =
-    if SymMatrix.null inVV then error ("Input matrix is empty")
-    else if L.null pairList then True
-    else
-        let (iIndex, jIndex) = head pairList
-            firstCheck = ((inVV V.! iIndex) V.! jIndex) == ((inVV V.! jIndex) V.! iIndex)
-        in
-        if firstCheck then checkSymmetry inVV (tail pairList)
-        else error ("Matrix is not symmetrical:" ++ (show (iIndex, jIndex)) ++ "=>" ++ (show ((inVV V.! iIndex) V.! jIndex)) ++ " /= " ++ (show ((inVV V.! jIndex) V.! iIndex)))
+checkSymmetry inVV pairList
+  | SymMatrix.null inVV = error "Input matrix is empty"
+  | L.null pairList = True
+  | otherwise =
+    let (iIndex, jIndex) = head pairList
+        firstCheck = ((inVV V.! iIndex) V.! jIndex) == ((inVV V.! jIndex) V.! iIndex)
+    in
+    if firstCheck then checkSymmetry inVV (tail pairList)
+    else error ("Matrix is not symmetrical:" ++ show (iIndex, jIndex) ++ "=>" ++ show ((inVV V.! iIndex) V.! jIndex) ++ " /= " ++ show ((inVV V.! jIndex) V.! iIndex))
 
 -- | addMatrixRow add a row to existing matrix to extend Matrix dimension
 -- used when adding HTU distances to existing distance matrix as Wagner tree is built
 addMatrixRow :: (Eq a) => Matrix a -> V.Vector a -> Matrix a
 addMatrixRow inM newRow =
     if V.null newRow then inM
-    else 
+    else
         inM `V.snoc` newRow
 
 
@@ -190,7 +201,7 @@ addMatrixRow inM newRow =
 addMatrices :: (Eq a) => Matrix a -> Matrix a -> Matrix a
 addMatrices inM newMatrix =
     if SymMatrix.null newMatrix then inM
-    else 
+    else
         inM V.++ newMatrix
 
 -- | reIndexTriple taske (i,j,k) and returns (max i j, min i j, k)
@@ -205,54 +216,49 @@ reIndexTriple trip@(iIndex, jIndex, value) =
 updateMatrix :: (Eq a, Show a, Ord a) => Matrix a -> [(Int, Int, a)] -> Matrix a
 updateMatrix inM modList =
     if L.null modList then inM
-    else 
+    else
         let orderedTripleList = S.uniqueSort $ fmap reIndexTriple modList
             minRow = fst3 $ head orderedTripleList
             maxRow = fst3 $ last orderedTripleList
         in
-        if minRow < 0 then error ("Update matrix out of bounds: " ++ (show orderedTripleList))
-        else if maxRow >= rows inM then error ("Update matrix out of bounds, row = " ++ (show $ rows inM) ++ " and trying to update row " ++ (show maxRow))
+        if minRow < 0 then error ("Update matrix out of bounds: " ++ show orderedTripleList)
+        else if maxRow >= rows inM then error ("Update matrix out of bounds, row = " ++ show (rows inM) ++ " and trying to update row " ++ show maxRow)
         else
             let firstPart = V.unsafeTake minRow inM
                 restPart  = V.unsafeDrop minRow inM
-                modifiedRemainder = updateRows restPart orderedTripleList minRow 
+                modifiedRemainder = updateRows restPart orderedTripleList minRow
             in
-            -- trace ("Modifying : " ++ (show modList) ++ "\n" ++ showMatrixNicely firstPart) (
-            -- trace (showMatrixNicely $ addMatrices firstPart modifiedRemainder) 
             addMatrices firstPart modifiedRemainder
-            -- )
 
 -- | unsafeUpdateMatrix unsafe version of updateMatrix
 unsafeUpdateMatrix :: (Eq a, Show a, Ord a) => Matrix a -> [(Int, Int, a)] -> Matrix a
 unsafeUpdateMatrix inM modList =
     if L.null modList then inM
-    else 
+    else
         let orderedTripleList = S.uniqueSort $ fmap reIndexTriple modList
             minRow = fst3 $ head orderedTripleList
             firstPart = V.unsafeTake minRow inM
             restPart  = V.unsafeDrop minRow inM
-            modifiedRemainder = updateRows restPart orderedTripleList minRow 
+            modifiedRemainder = updateRows restPart orderedTripleList minRow
         in
         addMatrices firstPart modifiedRemainder
-        
+
 -- | updateRows takes the section of the matrix containing rows that wil be modified
 -- (some not) and modifes or copies rows and rerns a Matrix (vector of roow vectors)
 updateRows :: (Show a, Eq a) => Matrix a -> [(Int, Int, a)] -> Int -> Matrix a
-updateRows inM tripList currentRow =
-    if L.null tripList then inM
-    else if SymMatrix.null inM then error ("Matrix is empty and there are modifications that remain: " ++ (show $ tripList))
-    else 
-        let (rowIndex, columnIndex, value) = L.head tripList
-            firstOrigRow = V.head inM
+updateRows inM tripList currentRow
+  | L.null tripList = inM
+  | SymMatrix.null inM = error ("Matrix is empty and there are modifications that remain: " ++ show tripList)
+  | otherwise =
+    let (rowIndex, columnIndex, value) = L.head tripList
+        firstOrigRow = V.head inM
+    in
+    if currentRow /= rowIndex then firstOrigRow `V.cons` updateRows (V.tail inM) tripList (currentRow + 1)
+    else -- account for multiple modifications to same row
+        let (newRow, newTripList) = modifyRow firstOrigRow columnIndex value currentRow (L.tail tripList)
         in
-        if currentRow /= rowIndex then firstOrigRow `V.cons` (updateRows (V.tail inM) tripList (currentRow + 1))
-        else -- account for multiple modifications to same row
-            let (newRow, newTripList) = modifyRow firstOrigRow columnIndex value currentRow (L.tail tripList)
-            in
-            -- This for debug--remove after test
-            --if (V.length newRow) /= (V.length firstOrigRow) then error ("Modified row not correct length " ++ (show newRow) ++ " -> " ++ (show firstOrigRow))
-            --else 
-            newRow `V.cons` (updateRows (V.tail inM) newTripList (currentRow + 1))
+        -- This for debug--remove after test
+        newRow `V.cons` updateRows (V.tail inM) newTripList (currentRow + 1)
 
 
 -- | modifyRow takes an initial modification (column and value) and then checks to see if there are more modifications in that
@@ -260,30 +266,29 @@ updateRows inM tripList currentRow =
 -- assumes that sorted triples sort by first, second, then third elements
 modifyRow :: V.Vector a -> Int -> a -> Int -> [(Int, Int, a)] -> (V.Vector a, [(Int, Int, a)])
 modifyRow inRow colIndex value rowNumber modList =
-    if colIndex >= (V.length inRow) then error ("Column to modify is outside length of row " ++ (show $ (rowNumber, colIndex)))
-    else 
+    if colIndex >= V.length inRow then error ("Column to modify is outside length of row " ++ show (rowNumber, colIndex))
+    else
         let firstPart = V.unsafeTake colIndex inRow
             remainderPart = V.unsafeDrop (colIndex + 1) inRow
             newRow = firstPart V.++ (value `V.cons` remainderPart)
-        in 
+        in
         if L.null modList then (newRow, modList)
         else continueRow (firstPart `V.snoc` value) inRow (colIndex + 1) rowNumber modList
-            
+
 
 -- | continueRow continues to modify a row with multiple column modifcations
 -- assumes that sorted triples sorted by first, second, then third elements
 continueRow :: V.Vector a ->V.Vector a -> Int -> Int -> [(Int, Int, a)] -> (V.Vector a, [(Int, Int, a)])
-continueRow partRow origRow colIndex rowNumber modList =
-    if colIndex == V.length origRow then (partRow, modList) --completed row
-    else if L.null modList then                             --no more modifications
-        (partRow V.++ (V.unsafeDrop colIndex origRow), modList)
-    else 
-        let (nextRowNumber, nextColIndex, nextValue) = L.head modList
-        in
-        if nextRowNumber /= rowNumber then (partRow V.++ (V.unsafeDrop colIndex origRow), modList)
-        else 
-            if nextColIndex /= colIndex then continueRow (partRow `V.snoc` (origRow V.! colIndex)) origRow (colIndex + 1) rowNumber modList
-            else continueRow (partRow `V.snoc` nextValue) origRow (colIndex + 1) rowNumber (L.tail modList)
+continueRow partRow origRow colIndex rowNumber modList
+  | colIndex == V.length origRow = (partRow, modList)
+  | L.null modList = (partRow V.++ V.unsafeDrop colIndex origRow, modList)
+  | otherwise =
+    let (nextRowNumber, nextColIndex, nextValue) = L.head modList
+    in
+    if nextRowNumber /= rowNumber then (partRow V.++ V.unsafeDrop colIndex origRow, modList)
+    else
+        if nextColIndex /= colIndex then continueRow (partRow `V.snoc` (origRow V.! colIndex)) origRow (colIndex + 1) rowNumber modList
+        else continueRow (partRow `V.snoc` nextValue) origRow (colIndex + 1) rowNumber (L.tail modList)
 
 -- | makeNiceRow pretty preints a list
 makeNiceRow :: (Show a) => V.Vector a -> String
@@ -313,23 +318,37 @@ deleteRowsAndColumns inM deleteList =
 deleteRC :: (Show a, Eq a) => Matrix a -> [Int] -> Int -> Int -> Matrix a
 deleteRC inM deleteList origRows rowCounter =
     if rowCounter == origRows then empty
-    else 
+    else
         let firstRow = V.head inM
             toKeep = rowCounter `L.notElem` deleteList
             newRow = deleteColumn firstRow deleteList (rowCounter + 1) 0
         in
-        if toKeep then newRow `V.cons` (deleteRC (V.tail inM) deleteList origRows (rowCounter + 1))
+        if toKeep then newRow `V.cons` deleteRC (V.tail inM) deleteList origRows (rowCounter + 1)
         else deleteRC (V.tail inM) deleteList origRows (rowCounter + 1)
 
--- | deleteColumn takes a row of a matrix (lower diagnonal), its length, 
+-- | deleteColumn takes a row of a matrix (lower diagnonal), its length,
 -- a list of cilumns to delete and a column counter and creates a new row
 deleteColumn :: (Show a, Eq a) => V.Vector a -> [Int] -> Int -> Int -> V.Vector a
 deleteColumn origRow deleteList rowLength colCounter =
     if colCounter == rowLength then V.empty
-    else 
-        let firstValue = V.head origRow 
+    else
+        let firstValue = V.head origRow
             toKeep = colCounter `L.notElem` deleteList
         in
-        if toKeep == True then firstValue `V.cons` (deleteColumn (V.tail origRow) deleteList rowLength (colCounter + 1))
+        if toKeep then firstValue `V.cons` deleteColumn (V.tail origRow) deleteList rowLength (colCounter + 1)
         else deleteColumn (V.tail origRow) deleteList rowLength (colCounter + 1)
-        
+
+-- | map maps a function over the matrix returning a matrix of new type
+map :: (Eq a) => (a->b) -> Matrix a -> Matrix b
+map f m =
+  if SymMatrix.null m then empty
+  else V.map (V.map f) m
+
+-- | flatten concats rows of matrix to make a single Vector
+flatten :: (Eq a, Show a) => Matrix a -> V.Vector a
+flatten m = 
+  if SymMatrix.null m then V.empty
+  else 
+    let rowList = fmap (getFullRowVect m) [0..((rows m) - 1)]
+    in
+    V.concat rowList
